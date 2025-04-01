@@ -58,9 +58,9 @@ def clear_chat_history():
 # Initialize the database and models
 @st.cache_resource
 def initialize_rag():
-    embedding_function = OpenAIEmbeddings(openai_api_key=api_key)
+    embedding_function = OpenAIEmbeddings(api_key=api_key)
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
-    model = ChatOpenAI(openai_api_key=api_key)
+    model = ChatOpenAI(api_key=api_key)
     return db, model
 
 # Function to check if Chroma DB exists and has data
@@ -69,7 +69,7 @@ def check_db_status():
         return "Database not found. Please create embeddings first."
     
     try:
-        embedding_function = OpenAIEmbeddings(openai_api_key=api_key)
+        embedding_function = OpenAIEmbeddings(api_key=api_key)
         db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
         collection = db._collection
         count = collection.count()
@@ -130,8 +130,8 @@ def create_embeddings():
         if os.path.exists(CHROMA_PATH):
             shutil.rmtree(CHROMA_PATH)
             
-        # Create embeddings
-        embedding_function = OpenAIEmbeddings(openai_api_key=api_key)
+        # Create embeddings - fix initialization
+        embedding_function = OpenAIEmbeddings(api_key=api_key)
         db = Chroma.from_documents(
             chunks, 
             embedding_function, 
