@@ -36,6 +36,16 @@ else:
     st.error("No OpenAI API key found. Please provide an API key to use this application.")
     st.stop()
 
+# Create a custom OpenAIEmbeddings initializer that avoids the proxies parameter
+def create_embeddings_model():
+    # Only specify the essential parameters to avoid passing unsupported parameters
+    return OpenAIEmbeddings(
+        model="text-embedding-ada-002",  # Explicitly set the model
+        openai_api_key=api_key,  # Pass the API key directly
+        show_progress_bar=True,  # Show progress for better user experience
+        chunk_size=1000  # Process in reasonable chunks
+    )
+
 # Constants
 # Use a directory we can write to in Streamlit Cloud
 # Using a subdirectory of tempfile.gettempdir() ensures we have write permissions
@@ -64,10 +74,10 @@ def clear_chat_history():
 # Initialize the database and models
 @st.cache_resource
 def initialize_rag():
-    # Use default initialization which will read from environment variables
-    embedding_function = OpenAIEmbeddings()
+    # Use our custom embeddings initializer
+    embedding_function = create_embeddings_model()
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
-    model = ChatOpenAI()
+    model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, openai_api_key=api_key)
     return db, model
 
 # Function to check if Chroma DB exists and has data
@@ -76,8 +86,8 @@ def check_db_status():
         return "Database not found. Please create embeddings first."
     
     try:
-        # Use default initialization which will read from environment variables
-        embedding_function = OpenAIEmbeddings()
+        # Use our custom embeddings initializer
+        embedding_function = create_embeddings_model()
         db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
         collection = db._collection
         count = collection.count()
@@ -145,8 +155,8 @@ def create_embeddings():
         os.makedirs(os.path.dirname(CHROMA_PATH), exist_ok=True)
             
         try:
-            # Use default initialization which will read from environment variables
-            embedding_function = OpenAIEmbeddings()
+            # Use our custom embeddings initializer
+            embedding_function = create_embeddings_model()
             db = Chroma.from_documents(
                 chunks, 
                 embedding_function, 
