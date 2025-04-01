@@ -1,5 +1,5 @@
 import streamlit as st
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import SKLearnVectorStore
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader
@@ -13,6 +13,7 @@ import json
 import glob
 import pickle
 import tempfile
+import numpy as np
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -92,7 +93,7 @@ class DirectOpenAIEmbeddings(Embeddings):
 # Using a subdirectory of tempfile.gettempdir() ensures we have write permissions
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "streamlit_rag")
 os.makedirs(TEMP_DIR, exist_ok=True)
-FAISS_PATH = os.path.join(TEMP_DIR, "faiss_index")
+VECTOR_STORE_PATH = os.path.join(TEMP_DIR, "sklearn_vector_store.pkl")
 DATA_PATH = "data/books"
 PROMPT_TEMPLATE = """
 Answer the question based only on the following context:
@@ -118,9 +119,9 @@ def initialize_rag():
     # Use our direct API call embeddings class
     embedding_function = DirectOpenAIEmbeddings(api_key=api_key)
     
-    # Load the FAISS index if it exists
-    if os.path.exists(f"{FAISS_PATH}.pkl"):
-        with open(f"{FAISS_PATH}.pkl", "rb") as f:
+    # Load the vector store if it exists
+    if os.path.exists(VECTOR_STORE_PATH):
+        with open(VECTOR_STORE_PATH, "rb") as f:
             db = pickle.load(f)
     else:
         st.error("Vector database not found. Please create embeddings first.")
@@ -129,20 +130,24 @@ def initialize_rag():
     model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, openai_api_key=api_key)
     return db, model
 
-# Function to check if FAISS index exists
+# Function to check if vector store exists
 def check_db_status():
-    if not os.path.exists(f"{FAISS_PATH}.pkl"):
+    if not os.path.exists(VECTOR_STORE_PATH):
         return "Database not found. Please create embeddings first."
     
     try:
-        with open(f"{FAISS_PATH}.pkl", "rb") as f:
+        with open(VECTOR_STORE_PATH, "rb") as f:
             db = pickle.load(f)
             
-        # Get the document count (approximate based on index size)
-        count = len(db.index_to_docstore_id)
+        # Get approximate document count
+        if hasattr(db, 'docstore'):
+            count = len(db.docstore._dict)
+        else:
+            count = "unknown number of"
+            
         if count == 0:
             return "Database exists but contains no documents. Please create embeddings first."
-        return f"Database found with approximately {count} embeddings."
+        return f"Database found with {count} embeddings."
     except Exception as e:
         return f"Error checking database: {str(e)}"
 
@@ -197,12 +202,15 @@ def create_embeddings():
             # Use our direct API call embeddings class
             embedding_function = DirectOpenAIEmbeddings(api_key=api_key)
             
-            # Create a FAISS index instead of Chroma
-            db = FAISS.from_documents(chunks, embedding_function)
+            # Create a SKLearn vector store
+            db = SKLearnVectorStore.from_documents(
+                documents=chunks,
+                embedding=embedding_function
+            )
             
-            # Save the FAISS index
-            os.makedirs(os.path.dirname(FAISS_PATH), exist_ok=True)
-            with open(f"{FAISS_PATH}.pkl", "wb") as f:
+            # Save the vector store
+            os.makedirs(os.path.dirname(VECTOR_STORE_PATH), exist_ok=True)
+            with open(VECTOR_STORE_PATH, "wb") as f:
                 pickle.dump(db, f)
                 
             st.success(f"Created embeddings for {len(chunks)} chunks and saved to disk.")
@@ -218,7 +226,7 @@ def get_available_docs():
 
 # Function to get response
 def get_response(query_text, db, model):
-    # Get similar documents with scores
+    # Get similar documents with relevance scores
     results = db.similarity_search_with_score(query_text, k=3)
     
     # Debug info
@@ -226,14 +234,12 @@ def get_response(query_text, db, model):
         st.session_state.debug_info = "No results found in the database."
         return None, None
     else:
-        # FAISS scores are distances (lower is better), so we convert them to similarity (higher is better)
-        # by using 1 / (1 + distance) which gives a score between 0 and 1
-        scores = [1 / (1 + score) for doc, score in results]
-        if scores[0] < 0.5:  # Arbitrary threshold
-            st.session_state.debug_info = f"Results found but relevance score too low: {scores[0]:.3f}"
-            # Continue anyway for debugging
+        # Make sure scores are in a reasonable range
+        top_score = results[0][1]
+        if top_score < 0.5:  # May need adjustment based on how scores work
+            st.session_state.debug_info = f"Results found but relevance score too low: {top_score:.3f}"
         else:
-            st.session_state.debug_info = f"Found {len(results)} results with top score: {scores[0]:.3f}"
+            st.session_state.debug_info = f"Found {len(results)} results with top score: {top_score:.3f}"
     
     context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
