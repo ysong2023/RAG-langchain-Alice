@@ -1,5 +1,5 @@
 import streamlit as st
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader
@@ -11,7 +11,7 @@ import os
 import requests
 import json
 import glob
-import shutil
+import pickle
 import tempfile
 
 # Load environment variables from .env file if it exists
@@ -92,7 +92,7 @@ class DirectOpenAIEmbeddings(Embeddings):
 # Using a subdirectory of tempfile.gettempdir() ensures we have write permissions
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "streamlit_rag")
 os.makedirs(TEMP_DIR, exist_ok=True)
-CHROMA_PATH = os.path.join(TEMP_DIR, "chroma")
+FAISS_PATH = os.path.join(TEMP_DIR, "faiss_index")
 DATA_PATH = "data/books"
 PROMPT_TEMPLATE = """
 Answer the question based only on the following context:
@@ -117,24 +117,32 @@ def clear_chat_history():
 def initialize_rag():
     # Use our direct API call embeddings class
     embedding_function = DirectOpenAIEmbeddings(api_key=api_key)
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
+    
+    # Load the FAISS index if it exists
+    if os.path.exists(f"{FAISS_PATH}.pkl"):
+        with open(f"{FAISS_PATH}.pkl", "rb") as f:
+            db = pickle.load(f)
+    else:
+        st.error("Vector database not found. Please create embeddings first.")
+        return None, None
+        
     model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, openai_api_key=api_key)
     return db, model
 
-# Function to check if Chroma DB exists and has data
+# Function to check if FAISS index exists
 def check_db_status():
-    if not os.path.exists(CHROMA_PATH):
+    if not os.path.exists(f"{FAISS_PATH}.pkl"):
         return "Database not found. Please create embeddings first."
     
     try:
-        # Use our direct API call embeddings class
-        embedding_function = DirectOpenAIEmbeddings(api_key=api_key)
-        db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
-        collection = db._collection
-        count = collection.count()
+        with open(f"{FAISS_PATH}.pkl", "rb") as f:
+            db = pickle.load(f)
+            
+        # Get the document count (approximate based on index size)
+        count = len(db.index_to_docstore_id)
         if count == 0:
             return "Database exists but contains no documents. Please create embeddings first."
-        return f"Database found with {count} embeddings."
+        return f"Database found with approximately {count} embeddings."
     except Exception as e:
         return f"Error checking database: {str(e)}"
 
@@ -184,26 +192,19 @@ def create_embeddings():
             with st.expander("Sample chunk"):
                 st.write(chunks[0].page_content)
     
-    with st.spinner("Creating embeddings... This may take a while."):
-        # Remove old database if it exists
-        try:
-            if os.path.exists(CHROMA_PATH):
-                shutil.rmtree(CHROMA_PATH)
-        except Exception as e:
-            st.warning(f"Could not remove old database: {str(e)}. Will attempt to overwrite.")
-            
-        # Make sure the directory exists
-        os.makedirs(os.path.dirname(CHROMA_PATH), exist_ok=True)
-            
+    with st.spinner("Creating embeddings... This may take a while."):            
         try:
             # Use our direct API call embeddings class
             embedding_function = DirectOpenAIEmbeddings(api_key=api_key)
-            db = Chroma.from_documents(
-                chunks, 
-                embedding_function, 
-                persist_directory=CHROMA_PATH
-            )
-            db.persist()
+            
+            # Create a FAISS index instead of Chroma
+            db = FAISS.from_documents(chunks, embedding_function)
+            
+            # Save the FAISS index
+            os.makedirs(os.path.dirname(FAISS_PATH), exist_ok=True)
+            with open(f"{FAISS_PATH}.pkl", "wb") as f:
+                pickle.dump(db, f)
+                
             st.success(f"Created embeddings for {len(chunks)} chunks and saved to disk.")
             return True
         except Exception as e:
@@ -217,18 +218,22 @@ def get_available_docs():
 
 # Function to get response
 def get_response(query_text, db, model):
-    # Lower the relevance threshold to 0.5 (from 0.7)
-    results = db.similarity_search_with_relevance_scores(query_text, k=3)
+    # Get similar documents with scores
+    results = db.similarity_search_with_score(query_text, k=3)
     
     # Debug info
     if len(results) == 0:
         st.session_state.debug_info = "No results found in the database."
         return None, None
-    elif results[0][1] < 0.5:
-        st.session_state.debug_info = f"Results found but relevance score too low: {results[0][1]}"
-        # Continue anyway, just for debugging
     else:
-        st.session_state.debug_info = f"Found {len(results)} results with top score: {results[0][1]}"
+        # FAISS scores are distances (lower is better), so we convert them to similarity (higher is better)
+        # by using 1 / (1 + distance) which gives a score between 0 and 1
+        scores = [1 / (1 + score) for doc, score in results]
+        if scores[0] < 0.5:  # Arbitrary threshold
+            st.session_state.debug_info = f"Results found but relevance score too low: {scores[0]:.3f}"
+            # Continue anyway for debugging
+        else:
+            st.session_state.debug_info = f"Found {len(results)} results with top score: {scores[0]:.3f}"
     
     context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
