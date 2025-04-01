@@ -11,6 +11,7 @@ import openai
 from openai import OpenAI
 import glob
 import shutil
+import tempfile
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -36,7 +37,11 @@ else:
     st.stop()
 
 # Constants
-CHROMA_PATH = "chroma"
+# Use a directory we can write to in Streamlit Cloud
+# Using a subdirectory of tempfile.gettempdir() ensures we have write permissions
+TEMP_DIR = os.path.join(tempfile.gettempdir(), "streamlit_rag")
+os.makedirs(TEMP_DIR, exist_ok=True)
+CHROMA_PATH = os.path.join(TEMP_DIR, "chroma")
 DATA_PATH = "data/books"
 PROMPT_TEMPLATE = """
 Answer the question based only on the following context:
@@ -130,19 +135,29 @@ def create_embeddings():
     
     with st.spinner("Creating embeddings... This may take a while."):
         # Remove old database if it exists
-        if os.path.exists(CHROMA_PATH):
-            shutil.rmtree(CHROMA_PATH)
+        try:
+            if os.path.exists(CHROMA_PATH):
+                shutil.rmtree(CHROMA_PATH)
+        except Exception as e:
+            st.warning(f"Could not remove old database: {str(e)}. Will attempt to overwrite.")
             
-        # Use default initialization which will read from environment variables
-        embedding_function = OpenAIEmbeddings()
-        db = Chroma.from_documents(
-            chunks, 
-            embedding_function, 
-            persist_directory=CHROMA_PATH
-        )
-        db.persist()
-        st.success(f"Created embeddings for {len(chunks)} chunks and saved to disk.")
-        return True
+        # Make sure the directory exists
+        os.makedirs(os.path.dirname(CHROMA_PATH), exist_ok=True)
+            
+        try:
+            # Use default initialization which will read from environment variables
+            embedding_function = OpenAIEmbeddings()
+            db = Chroma.from_documents(
+                chunks, 
+                embedding_function, 
+                persist_directory=CHROMA_PATH
+            )
+            db.persist()
+            st.success(f"Created embeddings for {len(chunks)} chunks and saved to disk.")
+            return True
+        except Exception as e:
+            st.error(f"Error creating embeddings: {str(e)}")
+            return False
 
 # Function to get available documents
 def get_available_docs():
