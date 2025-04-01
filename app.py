@@ -8,6 +8,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
 import os
 import openai
+from openai import OpenAI
 import glob
 import shutil
 
@@ -29,7 +30,7 @@ def get_openai_api_key():
 # Set OpenAI API key
 api_key = get_openai_api_key()
 if api_key:
-    openai.api_key = api_key
+    os.environ["OPENAI_API_KEY"] = api_key
 else:
     st.error("No OpenAI API key found. Please provide an API key to use this application.")
     st.stop()
@@ -58,9 +59,10 @@ def clear_chat_history():
 # Initialize the database and models
 @st.cache_resource
 def initialize_rag():
-    embedding_function = OpenAIEmbeddings(api_key=api_key)
+    # Use default initialization which will read from environment variables
+    embedding_function = OpenAIEmbeddings()
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
-    model = ChatOpenAI(api_key=api_key)
+    model = ChatOpenAI()
     return db, model
 
 # Function to check if Chroma DB exists and has data
@@ -69,7 +71,8 @@ def check_db_status():
         return "Database not found. Please create embeddings first."
     
     try:
-        embedding_function = OpenAIEmbeddings(api_key=api_key)
+        # Use default initialization which will read from environment variables
+        embedding_function = OpenAIEmbeddings()
         db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
         collection = db._collection
         count = collection.count()
@@ -130,8 +133,8 @@ def create_embeddings():
         if os.path.exists(CHROMA_PATH):
             shutil.rmtree(CHROMA_PATH)
             
-        # Create embeddings - fix initialization
-        embedding_function = OpenAIEmbeddings(api_key=api_key)
+        # Use default initialization which will read from environment variables
+        embedding_function = OpenAIEmbeddings()
         db = Chroma.from_documents(
             chunks, 
             embedding_function, 
