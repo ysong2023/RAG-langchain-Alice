@@ -1,11 +1,10 @@
 import streamlit as st
-from langchain_community.vectorstores import SKLearnVectorStore
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings.base import Embeddings
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple, Optional
 from dotenv import load_dotenv
 import os
 import requests
@@ -88,12 +87,51 @@ class DirectOpenAIEmbeddings(Embeddings):
             
         return response_data["data"][0]["embedding"]
 
+# A simple custom vector store that doesn't depend on scikit-learn
+class SimpleVectorStore:
+    def __init__(self, documents=None, embeddings=None, embedding_function=None):
+        self.documents = documents or []
+        self.embedding_vectors = embeddings or []
+        self.embedding_function = embedding_function
+        self.docstore = {"_dict": {}} if documents else {"_dict": {}}
+    
+    @classmethod
+    def from_documents(cls, documents, embedding):
+        """Create a vector store from documents."""
+        texts = [doc.page_content for doc in documents]
+        embeddings = embedding.embed_documents(texts)
+        
+        # Initialize docstore
+        docstore = {"_dict": {}}
+        for i, doc in enumerate(documents):
+            docstore["_dict"][i] = doc
+        
+        return cls(documents=documents, embeddings=embeddings, embedding_function=embedding, docstore=docstore)
+    
+    def similarity_search_with_score(self, query, k=4):
+        """Search for documents similar to query."""
+        query_embedding = np.array(self.embedding_function.embed_query(query))
+        
+        results = []
+        for i, doc_embedding in enumerate(self.embedding_vectors):
+            # Calculate cosine similarity
+            similarity = self._cosine_similarity(query_embedding, np.array(doc_embedding))
+            results.append((self.documents[i], similarity))
+        
+        # Sort by similarity and return top k
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:k]
+    
+    def _cosine_similarity(self, a, b):
+        """Calculate cosine similarity between two vectors."""
+        return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
 # Constants
 # Use a directory we can write to in Streamlit Cloud
 # Using a subdirectory of tempfile.gettempdir() ensures we have write permissions
 TEMP_DIR = os.path.join(tempfile.gettempdir(), "streamlit_rag")
 os.makedirs(TEMP_DIR, exist_ok=True)
-VECTOR_STORE_PATH = os.path.join(TEMP_DIR, "sklearn_vector_store.pkl")
+VECTOR_STORE_PATH = os.path.join(TEMP_DIR, "simple_vector_store.pkl")
 DATA_PATH = "data/books"
 PROMPT_TEMPLATE = """
 Answer the question based only on the following context:
@@ -140,10 +178,7 @@ def check_db_status():
             db = pickle.load(f)
             
         # Get approximate document count
-        if hasattr(db, 'docstore'):
-            count = len(db.docstore._dict)
-        else:
-            count = "unknown number of"
+        count = len(db.documents) if hasattr(db, 'documents') else 0
             
         if count == 0:
             return "Database exists but contains no documents. Please create embeddings first."
@@ -202,10 +237,14 @@ def create_embeddings():
             # Use our direct API call embeddings class
             embedding_function = DirectOpenAIEmbeddings(api_key=api_key)
             
-            # Create a SKLearn vector store
-            db = SKLearnVectorStore.from_documents(
+            # Create our simple vector store
+            texts = [doc.page_content for doc in chunks]
+            embeddings = embedding_function.embed_documents(texts)
+            
+            db = SimpleVectorStore(
                 documents=chunks,
-                embedding=embedding_function
+                embeddings=embeddings,
+                embedding_function=embedding_function
             )
             
             # Save the vector store
