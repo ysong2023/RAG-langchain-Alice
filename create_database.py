@@ -1,5 +1,5 @@
 # from langchain.document_loaders import DirectoryLoader
-from langchain_community.document_loaders import DirectoryLoader
+from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 # from langchain.embeddings import OpenAIEmbeddings
@@ -9,6 +9,7 @@ import openai
 from dotenv import load_dotenv
 import os
 import shutil
+import glob
 
 # Load environment variables. Assumes that project contains .env file with API keys
 load_dotenv()
@@ -32,8 +33,17 @@ def generate_data_store():
 
 
 def load_documents():
-    loader = DirectoryLoader(DATA_PATH, glob="*.md")
-    documents = loader.load()
+    # Use a simple text loader approach
+    documents = []
+    for file_path in glob.glob(os.path.join(DATA_PATH, "*.md")):
+        try:
+            loader = TextLoader(file_path, encoding="utf-8")
+            documents.extend(loader.load())
+            print(f"Loaded {file_path}")
+        except Exception as e:
+            print(f"Error loading file {file_path}: {e}")
+    
+    print(f"Loaded {len(documents)} documents")
     return documents
 
 
@@ -46,10 +56,14 @@ def split_text(documents: list[Document]):
     )
     chunks = text_splitter.split_documents(documents)
     print(f"Split {len(documents)} documents into {len(chunks)} chunks.")
-
-    document = chunks[10]
-    print(document.page_content)
-    print(document.metadata)
+    
+    # Only print a sample if we have chunks
+    if chunks:
+        sample_index = min(10, len(chunks) - 1)  # Avoid index error
+        document = chunks[sample_index]
+        print("Sample chunk content:")
+        print(document.page_content)
+        print(document.metadata)
 
     return chunks
 

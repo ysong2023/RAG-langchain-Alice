@@ -1,47 +1,69 @@
-# Langchain RAG Tutorial
+# RAG-LangChain Project
 
-## Install dependencies
+A Retrieval-Augmented Generation (RAG) system built with LangChain, ChromaDB, and OpenAI.
 
-1. Do the following before installing the dependencies found in `requirements.txt` file because of current challenges installing `onnxruntime` through `pip install onnxruntime`. 
+## Features
 
-    - For MacOS users, a workaround is to first install `onnxruntime` dependency for `chromadb` using:
+- Create embeddings from text documents using OpenAI
+- Store and retrieve embeddings using ChromaDB vector database
+- Query the database using natural language questions
+- Get context-aware responses using OpenAI's LLM
 
-    ```python
-     conda install onnxruntime -c conda-forge
-    ```
-    See this [thread](https://github.com/microsoft/onnxruntime/issues/11037) for additonal help if needed. 
+## Setup and Installation
 
-     - For Windows users, follow the guide [here](https://github.com/bycloudai/InstallVSBuildToolsWindows?tab=readme-ov-file) to install the Microsoft C++ Build Tools. Be sure to follow through to the last step to set the enviroment variable path.
+1. Clone this repository
+2. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+3. Add your OpenAI API key to the `.env` file:
+   ```
+   OPENAI_API_KEY=your_openai_api_key_goes_here
+   ```
 
+## Usage
 
-2. Now run this command to install dependenies in the `requirements.txt` file. 
+### Creating the Vector Database
 
-```python
-pip install -r requirements.txt
+Run the following command to process documents in the `data/books` directory and create embeddings:
+
 ```
-
-3. Install markdown depenendies with: 
-
-```python
-pip install "unstructured[md]"
-```
-
-## Create database
-
-Create the Chroma DB.
-
-```python
 python create_database.py
 ```
 
-## Query the database
+This will:
+- Load the document(s) in the data/books directory
+- Split them into smaller chunks
+- Create embeddings using OpenAI
+- Store the embeddings in a ChromaDB database
 
-Query the Chroma DB.
+### Querying the Database
 
-```python
-python query_data.py "How does Alice meet the Mad Hatter?"
+Ask questions about the documents using:
+
+```
+python query_data.py "your question here"
 ```
 
-> You'll also need to set up an OpenAI account (and set the OpenAI key in your environment variable) for this to work.
+Example:
+```
+python query_data.py "Who is Alice?"
+```
 
-Here is a step-by-step tutorial video: [RAG+Langchain Python Project: Easy AI/Chat For Your Docs](https://www.youtube.com/watch?v=tcqEUSNCn8I&ab_channel=pixegami).
+The system will:
+1. Find the most relevant passages from the documents
+2. Use them as context to generate an accurate answer
+3. Display the response along with the source documents
+
+## Customization
+
+- Modify `CHROMA_PATH` in the scripts to change the database location
+- Adjust `DATA_PATH` to point to different document directories
+- Change the `chunk_size` and `chunk_overlap` in `split_text()` for different segmentation
+
+## Troubleshooting
+
+If you encounter errors:
+- Ensure your OpenAI API key is valid and properly set in the .env file
+- Check that the data directory contains valid markdown files
+- Verify that all dependencies are installed correctly
