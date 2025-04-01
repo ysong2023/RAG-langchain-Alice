@@ -1,10 +1,12 @@
 import streamlit as st
 from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.embeddings.base import Embeddings
+from typing import List
 from dotenv import load_dotenv
 import os
 import openai
@@ -36,15 +38,32 @@ else:
     st.error("No OpenAI API key found. Please provide an API key to use this application.")
     st.stop()
 
-# Create a custom OpenAIEmbeddings initializer that avoids the proxies parameter
-def create_embeddings_model():
-    # Only specify the essential parameters to avoid passing unsupported parameters
-    return OpenAIEmbeddings(
-        model="text-embedding-ada-002",  # Explicitly set the model
-        openai_api_key=api_key,  # Pass the API key directly
-        show_progress_bar=True,  # Show progress for better user experience
-        chunk_size=1000  # Process in reasonable chunks
-    )
+# Create a custom embeddings class
+class SimpleOpenAIEmbeddings(Embeddings):
+    def __init__(self, api_key: str):
+        self.client = OpenAI(api_key=api_key)
+        
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed documents using the OpenAI API directly."""
+        embeddings = []
+        # Process in batches to avoid rate limits
+        batch_size = 10
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i+batch_size]
+            response = self.client.embeddings.create(
+                model="text-embedding-ada-002",
+                input=batch
+            )
+            embeddings.extend([item.embedding for item in response.data])
+        return embeddings
+    
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a query using the OpenAI API directly."""
+        response = self.client.embeddings.create(
+            model="text-embedding-ada-002",
+            input=[text]
+        )
+        return response.data[0].embedding
 
 # Constants
 # Use a directory we can write to in Streamlit Cloud
@@ -74,8 +93,8 @@ def clear_chat_history():
 # Initialize the database and models
 @st.cache_resource
 def initialize_rag():
-    # Use our custom embeddings initializer
-    embedding_function = create_embeddings_model()
+    # Use our simple embeddings class
+    embedding_function = SimpleOpenAIEmbeddings(api_key=api_key)
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
     model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0, openai_api_key=api_key)
     return db, model
@@ -86,8 +105,8 @@ def check_db_status():
         return "Database not found. Please create embeddings first."
     
     try:
-        # Use our custom embeddings initializer
-        embedding_function = create_embeddings_model()
+        # Use our simple embeddings class
+        embedding_function = SimpleOpenAIEmbeddings(api_key=api_key)
         db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
         collection = db._collection
         count = collection.count()
@@ -155,8 +174,8 @@ def create_embeddings():
         os.makedirs(os.path.dirname(CHROMA_PATH), exist_ok=True)
             
         try:
-            # Use our custom embeddings initializer
-            embedding_function = create_embeddings_model()
+            # Use our simple embeddings class
+            embedding_function = SimpleOpenAIEmbeddings(api_key=api_key)
             db = Chroma.from_documents(
                 chunks, 
                 embedding_function, 
