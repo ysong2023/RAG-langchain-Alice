@@ -3,10 +3,13 @@ from langchain_community.vectorstores import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
+from langchain_community.document_loaders import TextLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from dotenv import load_dotenv
 import os
 import openai
 import glob
+import shutil
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -63,7 +66,7 @@ def initialize_rag():
 # Function to check if Chroma DB exists and has data
 def check_db_status():
     if not os.path.exists(CHROMA_PATH):
-        return "Database not found. Please run create_database.py first."
+        return "Database not found. Please create embeddings first."
     
     try:
         embedding_function = OpenAIEmbeddings(openai_api_key=api_key)
@@ -71,10 +74,72 @@ def check_db_status():
         collection = db._collection
         count = collection.count()
         if count == 0:
-            return "Database exists but contains no documents. Please run create_database.py."
+            return "Database exists but contains no documents. Please create embeddings first."
         return f"Database found with {count} embeddings."
     except Exception as e:
         return f"Error checking database: {str(e)}"
+
+# Function to load documents
+def load_documents():
+    documents = []
+    
+    # Get all markdown files in the data directory
+    md_files = glob.glob(f"{DATA_PATH}/*.md")
+    
+    for md_file in md_files:
+        try:
+            loader = TextLoader(md_file)
+            documents.extend(loader.load())
+        except Exception as e:
+            st.error(f"Error loading {md_file}: {str(e)}")
+    
+    return documents
+
+# Function to split text into chunks
+def split_text(documents):
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+    )
+    
+    chunks = text_splitter.split_documents(documents)
+    return chunks
+
+# Function to create embeddings
+def create_embeddings():
+    with st.spinner("Loading documents..."):
+        documents = load_documents()
+        
+        if len(documents) == 0:
+            st.error("No documents found in data directory. Please add markdown files to data/books/")
+            return False
+            
+        st.info(f"Loaded {len(documents)} document(s)")
+    
+    with st.spinner("Splitting documents into chunks..."):
+        chunks = split_text(documents)
+        st.info(f"Split into {len(chunks)} chunks")
+        
+        # Show a sample chunk
+        if len(chunks) > 0:
+            with st.expander("Sample chunk"):
+                st.write(chunks[0].page_content)
+    
+    with st.spinner("Creating embeddings... This may take a while."):
+        # Remove old database if it exists
+        if os.path.exists(CHROMA_PATH):
+            shutil.rmtree(CHROMA_PATH)
+            
+        # Create embeddings
+        embedding_function = OpenAIEmbeddings(openai_api_key=api_key)
+        db = Chroma.from_documents(
+            chunks, 
+            embedding_function, 
+            persist_directory=CHROMA_PATH
+        )
+        db.persist()
+        st.success(f"Created embeddings for {len(chunks)} chunks and saved to disk.")
+        return True
 
 # Function to get available documents
 def get_available_docs():
@@ -206,6 +271,12 @@ with st.sidebar:
     db_status = check_db_status()
     st.markdown(db_status)
     
+    if "Database not found" in db_status or "contains no documents" in db_status:
+        if st.button("Create Embeddings", type="primary"):
+            success = create_embeddings()
+            if success:
+                st.rerun()
+    
     st.markdown("---")
     st.markdown("### Sample Questions:")
     
@@ -235,9 +306,15 @@ with col2:
         clear_chat_history()
         st.rerun()
 
-# Initialize RAG system
+# Check if database exists before initializing
 try:
-    db, model = initialize_rag()
+    db_status = check_db_status()
+    if "Database not found" in db_status or "contains no documents" in db_status:
+        st.warning(db_status)
+        st.info("Please create embeddings using the button in the sidebar.")
+        db, model = None, None
+    else:
+        db, model = initialize_rag()
 except Exception as e:
     st.error(f"Error initializing the database: {str(e)}")
     st.stop()
@@ -285,7 +362,8 @@ for message in st.session_state.messages:
 query = st.text_input(
     "Enter your question:", 
     value=st.session_state.get("current_question", ""),
-    placeholder="e.g., Who is Alice?"
+    placeholder="e.g., Who is Alice?",
+    disabled=db is None
 )
 
 # Clear current_question after use
@@ -293,7 +371,7 @@ if "current_question" in st.session_state:
     del st.session_state.current_question
 
 # Process query
-if query:
+if query and db is not None:
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": query})
     
@@ -319,7 +397,7 @@ if query:
             # Add a message explaining the issue
             st.session_state.messages.append({
                 "role": "assistant", 
-                "content": "I couldn't find relevant information for your query. This could be because the documents haven't been properly loaded into the database. Please run 'python create_database.py' to ensure documents are processed before asking questions."
+                "content": "I couldn't find relevant information for your query. This could be because the database hasn't been properly initialized."
             })
     
     # Rerun to display the updated chat history
